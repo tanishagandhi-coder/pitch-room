@@ -200,3 +200,51 @@ FALLBACK = {
 }
 
 LANGS = {"English": "en", "日本語": "ja", "हिन्दी": "hi"}
+
+
+# ---------------------------------------------------------------- interface strings
+UI = {
+ "en": {"who":"Who we are reaching","runs":"How it runs","sched":"The schedule","pay":"Payable, with tax",
+        "net":"Net to the publisher","reach":"Estimated reach","cpm":"Cost per thousand","bonus":"Bonus inventory given",
+        "money":"Where the money goes","reachsrc":"Where the reach comes from","settle":"How the money is actually settled",
+        "measure":"What we will measure","risk":"The honest risk","whyus":"Why this group and not a platform",
+        "line":"Line","qty":"Qty","rate":"Rate","gross":"Gross","why":"Why","detail":"Detail","loading":"Loading",
+        "over":"This plan is over the stated budget. Cut insertions or trade a premium position before it goes to the client.",
+        "stale":"The plan on screen was written in another language. Press build to rewrite it.",
+        "whyus_body":"Platform money buys impressions. This buys the one thing a platform cannot sell, which is the judgement of a newsroom the reader already trusts, in the language they actually read."},
+ "ja": {"who":"ターゲット","runs":"進行","sched":"掲載スケジュール","pay":"税込 支払額",
+        "net":"媒体社への正味額","reach":"推定リーチ","cpm":"千人あたり単価","bonus":"ボーナス枠の提供",
+        "money":"費用の配分","reachsrc":"リーチの内訳","settle":"精算の流れ",
+        "measure":"測定指標","risk":"想定されるリスク","whyus":"プラットフォームではなく、この媒体を選ぶ理由",
+        "line":"項目","qty":"数量","rate":"単価","gross":"総額","why":"理由","detail":"内訳","loading":"割増",
+        "over":"予算を超えています。出稿回数を減らすか、プレミアム位置を見直してから提案してください。",
+        "stale":"画面の提案書は別の言語で作成されています。作成ボタンを押して再生成してください。",
+        "whyus_body":"プラットフォームに払う費用はインプレッションを買うだけです。ここで買えるのは、読者がすでに信頼している編集部の判断を、読者が実際に読む言語で届けることです。"},
+ "hi": {"who":"हम किस तक पहुँच रहे हैं","runs":"यह कैसे चलेगा","sched":"शेड्यूल","pay":"कर सहित देय",
+        "net":"प्रकाशक को शुद्ध","reach":"अनुमानित पहुँच","cpm":"प्रति हज़ार लागत","bonus":"बोनस इन्वेंटरी",
+        "money":"पैसा कहाँ जा रहा है","reachsrc":"पहुँच कहाँ से आ रही है","settle":"भुगतान कैसे तय होता है",
+        "measure":"हम क्या मापेंगे","risk":"वास्तविक जोखिम","whyus":"प्लेटफ़ॉर्म नहीं, यह समूह क्यों",
+        "line":"मद","qty":"मात्रा","rate":"दर","gross":"सकल","why":"कारण","detail":"विवरण","loading":"लोडिंग",
+        "over":"यह योजना बजट से ऊपर है। क्लाइंट को भेजने से पहले इंसर्शन घटाएँ या प्रीमियम पोज़िशन बदलें।",
+        "stale":"स्क्रीन पर दिख रही योजना दूसरी भाषा में बनी है। दोबारा बनाने के लिए बिल्ड दबाएँ।",
+        "whyus_body":"प्लेटफ़ॉर्म का पैसा सिर्फ़ इम्प्रेशन खरीदता है। यहाँ वह मिलता है जो कोई प्लेटफ़ॉर्म नहीं बेच सकता, यानी उस न्यूज़रूम का भरोसा, उसी भाषा में जिसमें पाठक पढ़ता है।"},
+}
+
+# inventory names in each language
+NAMES = {
+ "ja": {"toi_display":"タイムズ・オブ・インディア ディスプレイ","toi_home":"トップページ ジャック 1日",
+        "et_display":"エコノミック・タイムズ ディスプレイ","nbt_display":"ナヴバーラト・タイムズ ヒンディー語",
+        "regional":"地方紙 マラーティー語 ベンガル語 カンナダ語","video_pre":"動画プレロール プレミアム",
+        "etimes":"ETimes エンタメ","newsletter":"ニュースレター 単独協賛","audio":"ラジオ ホストリード",
+        "tv_spot":"ニュース番組 10秒スポット","native":"タイアップ記事 編集部制作","series":"編集連載 全3回",
+        "roundtable":"業界ラウンドテーブル 記事化込み","summit":"サミット登壇枠","awards":"アワード部門協賛"},
+ "hi": {"toi_display":"टाइम्स ऑफ इंडिया, डिस्प्ले","toi_home":"होमपेज टेकओवर, एक दिन",
+        "et_display":"इकोनॉमिक टाइम्स, डिस्प्ले","nbt_display":"नवभारत टाइम्स, हिंदी डिस्प्ले",
+        "regional":"क्षेत्रीय अख़बार, मराठी बंगाली कन्नड़","video_pre":"वीडियो प्री रोल, प्रीमियम",
+        "etimes":"ईटाइम्स, मनोरंजन","newsletter":"न्यूज़लेटर, एकमात्र प्रायोजक","audio":"रेडियो, होस्ट रीड",
+        "tv_spot":"न्यूज़ टीवी, 10 सेकंड स्पॉट","native":"स्पॉन्सर्ड आर्टिकल","series":"संपादकीय श्रृंखला, तीन भाग",
+        "roundtable":"इंडस्ट्री राउंडटेबल","summit":"समिट पैनल स्लॉट","awards":"अवॉर्ड कैटेगरी प्रायोजन"},
+}
+
+def name_for(key, default, lang):
+    return NAMES.get(lang, {}).get(key, default)

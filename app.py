@@ -95,7 +95,7 @@ def price_print(rows, season_pct):
     return out
 
 
-def price_digital(rows):
+def price_digital(rows, lang="en"):
     out = []
     for r in rows:
         spec = D.DIGITAL.get(r.get("id"))
@@ -105,7 +105,7 @@ def price_digital(rows):
             impr = max(1000, int(r.get("impressions", 1_000_000)))
             gross = impr / 1000 * spec["cpm"]
             out.append({
-                "Line": spec["name"],
+                "Line": D.name_for(r.get("id"), spec["name"], lang),
                 "Detail": f'CPM {inr_full(spec["cpm"])}',
                 "Loading": "0%",
                 "Qty": impr,
@@ -121,7 +121,7 @@ def price_digital(rows):
             if units > 50:
                 units = 1
             out.append({
-                "Line": spec["name"],
+                "Line": D.name_for(r.get("id"), spec["name"], lang),
                 "Detail": "Fixed price",
                 "Loading": "0%",
                 "Qty": units,
@@ -135,7 +135,7 @@ def price_digital(rows):
     return out
 
 
-def price_content(rows):
+def price_content(rows, lang="en"):
     out = []
     for r in rows:
         spec = D.CONTENT.get(r.get("id"))
@@ -143,7 +143,7 @@ def price_content(rows):
             continue
         units = max(1, int(r.get("units", 1)))
         out.append({
-            "Line": spec["name"],
+            "Line": D.name_for(r.get("id"), spec["name"], lang),
             "Detail": "Branded content desk",
             "Loading": "0%",
             "Qty": units,
@@ -303,9 +303,15 @@ if not plan:
     st.stop()
 
 d = plan["data"]
+# the saved example exists in every language, so follow the picker immediately
+if plan["offline"] and plan["lang"] != lang:
+    d = D.FALLBACK[lang]
+    plan["data"], plan["lang"] = d, lang
+
+U = D.UI[lang]
 lines = (price_print(d.get("print", []), D.SEASON_LOADING[season])
-         + price_digital(d.get("digital", []))
-         + price_content(d.get("content", [])))
+         + price_digital(d.get("digital", []), lang)
+         + price_content(d.get("content", []), lang))
 c = commercials(lines, agency, discount, bonus)
 df = pd.DataFrame(lines)
 
@@ -313,6 +319,8 @@ if plan["offline"]:
     st.markdown('<div class="warn">Showing the saved example. Everything here works except freshly written copy, which needs an API key.</div>',
                 unsafe_allow_html=True)
 
+if not plan["offline"] and plan["lang"] != lang:
+    st.info(D.UI[lang]["stale"])
 st.markdown(f'<div class="big">{d.get("title","")}</div>', unsafe_allow_html=True)
 st.write(d.get("objective", ""))
 st.markdown("".join(f'<span class="srcpill">{s["title"]}</span>' for s in plan["sources"]),
@@ -320,13 +328,13 @@ st.markdown("".join(f'<span class="srcpill">{s["title"]}</span>' for s in plan["
 
 over = c["payable"] > budget * 1.05
 m = st.columns(5)
-m[0].metric("Payable, with tax", inr(c["payable"]), f'{(c["payable"]/budget-1)*100:+.0f}% against budget')
-m[1].metric("Net to the publisher", inr(c["net"]))
-m[2].metric("Estimated reach", f'{c["reach"]/1_000_000:.1f} m')
-m[3].metric("Cost per thousand", inr_full(c["cpm"]))
-m[4].metric("Bonus inventory given", inr(c["bonus"]))
+m[0].metric(U["pay"], inr(c["payable"]), f'{(c["payable"]/budget-1)*100:+.0f}% against budget')
+m[1].metric(U["net"], inr(c["net"]))
+m[2].metric(U["reach"], f'{c["reach"]/1_000_000:.1f} m')
+m[3].metric(U["cpm"], inr_full(c["cpm"]))
+m[4].metric(U["bonus"], inr(c["bonus"]))
 if over:
-    st.markdown('<div class="warn">This plan is over the stated budget. Cut insertions or trade a premium position before it goes to the client.</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="warn">{U["over"]}</div>', unsafe_allow_html=True)
 
 t1, t2, t3, t4, t5 = st.tabs(["The plan", "The numbers", "Release order", "The argument", "Export"])
 
@@ -335,31 +343,32 @@ with t1:
     st.write("")
     cc = st.columns(2)
     with cc[0]:
-        st.markdown("##### Who we are reaching")
+        st.markdown("##### " + U["who"])
         for a in d.get("audience", []):
             st.markdown(f"- {a}")
     with cc[1]:
-        st.markdown("##### How it runs")
+        st.markdown("##### " + U["runs"])
         for t in d.get("timeline", []):
             st.markdown(f"**{t.get('phase','')}**  {t.get('action','')}")
-    st.markdown("##### The schedule")
+    st.markdown("##### " + U["sched"])
     show = df[["Line", "Detail", "Loading", "Qty", "Rate", "Gross", "Why"]].copy()
-    show["Rate"] = show["Rate"].map(inr_full)
-    show["Gross"] = show["Gross"].map(inr_full)
-    show["Qty"] = show["Qty"].map(lambda x: f"{x:,.0f}")
+    show.columns = [U["line"], U["detail"], U["loading"], U["qty"], U["rate"], U["gross"], U["why"]]
+    show[U["rate"]] = show[U["rate"]].map(inr_full)
+    show[U["gross"]] = show[U["gross"]].map(inr_full)
+    show[U["qty"]] = show[U["qty"]].map(lambda x: f"{x:,.0f}")
     st.dataframe(show, use_container_width=True, hide_index=True)
 
 with t2:
     a, b = st.columns([1, 1])
     with a:
-        st.markdown("##### Where the money goes")
+        st.markdown("##### " + U["money"])
         bygroup = df.groupby("Group")["Gross"].sum().reset_index()
         st.bar_chart(bygroup, x="Group", y="Gross", color="#C8102E", height=260)
     with b:
-        st.markdown("##### Where the reach comes from")
+        st.markdown("##### " + U["reachsrc"])
         byreach = df.groupby("Group")["Reach"].sum().reset_index()
         st.bar_chart(byreach, x="Group", y="Reach", color="#1B2A4A", height=260)
-    st.markdown("##### How the money is actually settled")
+    st.markdown("##### " + U["settle"])
     ladder = pd.DataFrame([
         ["Gross, card rate", c["gross"]],
         [f"Negotiated discount, {discount} percent", -c["discount"]],
@@ -387,15 +396,13 @@ with t3:
                 unsafe_allow_html=True)
 
 with t4:
-    st.markdown("##### What we will measure")
+    st.markdown("##### " + U["measure"])
     for k in d.get("kpis", []):
         st.markdown(f"- {k}")
-    st.markdown("##### The honest risk")
+    st.markdown("##### " + U["risk"])
     st.write(d.get("risk", ""))
-    st.markdown("##### Why this group and not a platform")
-    st.write("Platform money buys impressions. This buys the one thing a platform cannot sell, "
-             "which is the judgement of a newsroom the reader already trusts, in the language "
-             "they actually read.")
+    st.markdown("##### " + U["whyus"])
+    st.write(U["whyus_body"])
 
 with t5:
     md = [f"# {d.get('title','')}", "", d.get("objective", ""), "", "## Insight", d.get("insight", ""), "",
