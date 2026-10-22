@@ -1,13 +1,13 @@
 """
 Pitch Room, a Kenja prototype.
 
-A brief goes in. A costed, bilingual media plan comes out, priced from a real
-rate card rather than from a language model.
+A brief goes in. A costed media plan comes out, priced from a rate card rather
+than from a language model, in English, Japanese or Hindi.
 
-Run locally:   streamlit run app.py
-Key:           put ANTHROPIC_API_KEY in .streamlit/secrets.toml or the environment
+Run:  streamlit run app.py
 """
 
+import hashlib
 import json
 import os
 import re
@@ -17,28 +17,67 @@ import pandas as pd
 import streamlit as st
 
 import toi_data as D
+from strings import STR
 
-st.set_page_config(page_title="Pitch Room", page_icon="📰", layout="wide")
+st.set_page_config(page_title="Pitch Room", page_icon="📰", layout="wide",
+                   initial_sidebar_state="expanded")
 
 MODEL = os.environ.get("PITCHROOM_MODEL", "claude-sonnet-5-5")
+RED, NAVY, TEAL, GOLD, PLUM = "#C8102E", "#1B2A4A", "#0F7B6C", "#C98A1F", "#6B3FA0"
 
-# --------------------------------------------------------------- styling
-st.markdown("""
+# ------------------------------------------------------------------ state
+ss = st.session_state
+ss.setdefault("lang", "en")
+ss.setdefault("user", None)
+ss.setdefault("users", {"toi.demo": hashlib.sha256("timesofindia".encode()).hexdigest()})
+ss.setdefault("plan", None)
+ss.setdefault("history", [])
+ss.setdefault("zoom", 80)
+ss.setdefault("page", "room")
+
+L = ss.lang
+T = STR[L]
+
+
+def css():
+    z = ss.zoom
+    st.markdown(f"""
 <style>
-.block-container{padding-top:2.2rem;max-width:1400px}
-h1,h2,h3{letter-spacing:-.01em}
-.big{font-size:2rem;font-weight:700;line-height:1.1}
-.sub{color:#6b7280;font-size:.85rem}
-.kv{border:1px solid rgba(128,128,128,.25);border-radius:10px;padding:12px 14px}
-.srcpill{display:inline-block;border:1px solid rgba(200,16,46,.4);background:rgba(200,16,46,.07);
-         color:#C8102E;border-radius:999px;padding:2px 10px;font-size:.72rem;margin:0 5px 5px 0}
-.warn{border-left:4px solid #C8102E;background:rgba(200,16,46,.06);padding:10px 14px;border-radius:8px}
-.ok{border-left:4px solid #0F6B4F;background:rgba(15,107,79,.07);padding:10px 14px;border-radius:8px}
-</style>
-""", unsafe_allow_html=True)
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&family=Noto+Sans+Devanagari:wght@400;500;700&display=swap');
+html {{ zoom: {z}%; }}
+html, body, [class*="st-"], button, input, textarea, select, .stMarkdown {{
+  font-family: 'Plus Jakarta Sans','Noto Sans JP','Noto Sans Devanagari',system-ui,sans-serif !important; }}
+h1,h2,h3,.disp {{ font-family: 'Instrument Serif','Noto Sans JP','Noto Sans Devanagari',Georgia,serif !important;
+  font-weight: 400 !important; letter-spacing: -.01em; }}
+.block-container {{ padding-top: 1.4rem; padding-bottom: 3rem; max-width: 1380px; }}
+[data-testid="stSidebar"] {{ background: linear-gradient(180deg,#FFF 0%,#FBF7F5 100%); border-right:1px solid #ECE7E3; }}
+[data-testid="stMetricValue"] {{ font-family:'Instrument Serif',serif !important; font-weight:400 !important; }}
+[data-testid="stMetricLabel"] p {{ text-transform:uppercase; letter-spacing:.05em; font-size:.68rem !important; color:#6B7280; }}
+.disp {{ font-size:2.1rem; line-height:1.12; color:#16202C; margin:.1rem 0 .3rem; }}
+.lede {{ color:#5B6472; font-size:1rem; margin-bottom:.6rem; }}
+.card {{ border:1px solid #E8E4E0; border-left:5px solid {RED}; border-radius:12px;
+  padding:14px 16px; background:#fff; height:100%; }}
+.card.n {{ border-left-color:{NAVY}; }} .card.t {{ border-left-color:{TEAL}; }}
+.card.g {{ border-left-color:{GOLD}; }} .card.p {{ border-left-color:{PLUM}; }}
+.card h4 {{ margin:0 0 6px; font-size:.95rem; color:#16202C; font-weight:600; }}
+.card p {{ margin:0; font-size:.86rem; color:#5B6472; }}
+.pill {{ display:inline-block; border-radius:999px; padding:3px 11px; font-size:.72rem;
+  margin:0 6px 6px 0; border:1px solid; }}
+.warn {{ border-left:5px solid {RED}; background:#FDEEF0; padding:11px 15px; border-radius:10px; color:#16202C; }}
+.good {{ border-left:5px solid {TEAL}; background:#E8F5F1; padding:11px 15px; border-radius:10px; color:#16202C; }}
+.step {{ display:flex; gap:12px; align-items:flex-start; margin-bottom:10px; }}
+.step b {{ flex:none; width:26px; height:26px; border-radius:50%; background:{RED}; color:#fff;
+  display:flex; align-items:center; justify-content:center; font-size:.8rem; }}
+.stTabs [data-baseweb="tab-list"] {{ gap:4px; }}
+.stTabs [data-baseweb="tab"] {{ padding:6px 14px; border-radius:8px 8px 0 0; }}
+hr {{ margin:.8rem 0; }}
+</style>""", unsafe_allow_html=True)
 
 
-# --------------------------------------------------------------- money
+css()
+
+
+# ------------------------------------------------------------------ helpers
 def inr(n):
     n = round(float(n))
     if abs(n) >= 10_000_000:
@@ -52,135 +91,181 @@ def inr_full(n):
     return f"₹{round(float(n)):,.0f}"
 
 
-# --------------------------------------------------------------- retrieval
+def h(txt):
+    st.markdown(f'<div class="disp">{txt}</div>', unsafe_allow_html=True)
+
+
+def topbar():
+    c = st.columns([4, 3, 2])
+    with c[0]:
+        st.markdown(f'**{T["app"]}**  <span style="color:#8A8F98;font-size:.8rem">{T["tagline"]}</span>',
+                    unsafe_allow_html=True)
+    with c[1]:
+        choice = st.radio(T["lang_label"], ["English", "日本語", "हिन्दी"],
+                          index=["en", "ja", "hi"].index(ss.lang),
+                          horizontal=True, label_visibility="collapsed", key="langpick")
+        new = {"English": "en", "日本語": "ja", "हिन्दी": "hi"}[choice]
+        if new != ss.lang:
+            ss.lang = new
+            st.rerun()
+    with c[2]:
+        if ss.user:
+            st.markdown(f'<div style="text-align:right;font-size:.8rem;color:#6B7280">'
+                        f'{T["signedin"]} <b>{ss.user}</b></div>', unsafe_allow_html=True)
+            if st.button(T["signout"], use_container_width=True):
+                ss.user = None
+                st.rerun()
+    st.divider()
+
+
+# ------------------------------------------------------------------ auth
+def auth_page():
+    h(T["auth_h"])
+    st.markdown(f'<div class="lede">{T["auth_s"]}</div>', unsafe_allow_html=True)
+    a, b = st.columns([1, 1.1])
+    with a:
+        ti, tu = st.tabs([T["tab_in"], T["tab_up"]])
+        with ti:
+            with st.form("in"):
+                u = st.text_input(T["user"])
+                p = st.text_input(T["pwd"], type="password")
+                if st.form_submit_button(T["btn_in"], type="primary", use_container_width=True):
+                    hp = hashlib.sha256(p.encode()).hexdigest()
+                    if ss.users.get(u.strip()) == hp:
+                        ss.user = u.strip()
+                        st.rerun()
+                    else:
+                        st.error(T["err_user"])
+            st.caption(T["demo"])
+        with tu:
+            with st.form("up"):
+                u = st.text_input(T["user"], key="nu")
+                p1 = st.text_input(T["pwd"], type="password", key="np1")
+                p2 = st.text_input(T["pwd2"], type="password", key="np2")
+                if st.form_submit_button(T["btn_up"], type="primary", use_container_width=True):
+                    u = u.strip()
+                    if not u or u in ss.users:
+                        st.error(T["err_exists"])
+                    elif len(p1) < 6:
+                        st.error(T["err_short"])
+                    elif p1 != p2:
+                        st.error(T["err_match"])
+                    else:
+                        ss.users[u] = hashlib.sha256(p1.encode()).hexdigest()
+                        ss.user = u
+                        st.rerun()
+        st.caption(T["note_auth"])
+    with b:
+        for k, cls in [("w1", ""), ("w3", "n"), ("w4", "t")]:
+            st.markdown(f'<div class="card {cls}"><h4>{T[k+"_h"]}</h4><p>{T[k+"_b"]}</p></div>',
+                        unsafe_allow_html=True)
+            st.write("")
+
+
+# ------------------------------------------------------------------ explainer
+def what_page():
+    h(T["what_h"])
+    st.markdown(f'<div class="lede">{T["what_lede"]}</div>', unsafe_allow_html=True)
+    rows = [("w1", ""), ("w2", "n"), ("w3", "t"), ("w4", "g"), ("w5", "p"), ("w6", "")]
+    for i in range(0, 6, 3):
+        cols = st.columns(3)
+        for col, (k, cls) in zip(cols, rows[i:i+3]):
+            with col:
+                st.markdown(f'<div class="card {cls}"><h4>{T[k+"_h"]}</h4><p>{T[k+"_b"]}</p></div>',
+                            unsafe_allow_html=True)
+        st.write("")
+    if st.button(T["start"], type="primary"):
+        ss.page = "room"
+        st.rerun()
+
+
+# ------------------------------------------------------------------ retrieval, pricing
 def retrieve(brief, enabled):
     words = set(re.split(r"[^a-z]+", brief.lower()))
     scored = []
     for c in D.CORPUS:
         if c["id"] not in enabled:
             continue
-        s = sum(1 for k in c["keys"] if k in words)
-        if c["id"] == "rate":
-            s += 5
+        s = sum(1 for k in c["keys"] if k in words) + (5 if c["id"] == "rate" else 0)
         if s:
             scored.append((s, c))
     scored.sort(key=lambda x: -x[0])
     return [c for _, c in scored[:4]]
 
 
-# --------------------------------------------------------------- pricing
 def price_print(rows, season_pct):
     out = []
     for r in rows:
-        ed = D.PRINT_EDITIONS.get(r.get("edition"))
-        sz = D.PRINT_SIZES.get(r.get("size"))
+        ed, sz = D.PRINT_EDITIONS.get(r.get("edition")), D.PRINT_SIZES.get(r.get("size"))
         if not ed or not sz:
             continue
-        pos_pct = D.POSITION_LOADING.get(r.get("position", "Run of paper"), 0)
+        pos = D.POSITION_LOADING.get(r.get("position", "Run of paper"), 0)
         ins = max(1, int(r.get("insertions", 1)))
-        base = ed["rate_sqcm"] * sz
-        loaded = base * (1 + pos_pct / 100) * (1 + season_pct / 100)
-        out.append({
-            "Line": f'{r["edition"]}, {r["size"]}, {r.get("position","Run of paper")}',
-            "Detail": f'{sz} sq cm at {inr_full(ed["rate_sqcm"])} per sq cm',
-            "Loading": f'{pos_pct + season_pct}%',
-            "Qty": ins,
-            "Unit": "insertion",
-            "Rate": loaded,
-            "Gross": loaded * ins,
-            "Reach": ed["readership"] * min(ins, 3) * 0.55,
-            "Why": r.get("why", ""),
-            "Group": "Print",
-        })
+        rate = ed["rate_sqcm"] * sz * (1 + pos / 100) * (1 + season_pct / 100)
+        out.append({"Line": f'{r["edition"]}, {r["size"]}, {r.get("position","Run of paper")}',
+                    "Detail": f'{sz} sq cm', "Loading": f"{pos + season_pct}%", "Qty": ins,
+                    "Unit": "insertion", "Rate": rate, "Gross": rate * ins,
+                    "Reach": ed["readership"] * min(ins, 3) * 0.55,
+                    "Why": r.get("why", ""), "Group": "Print"})
     return out
 
 
-def price_digital(rows, lang="en"):
+def price_digital(rows, lang):
     out = []
     for r in rows:
         spec = D.DIGITAL.get(r.get("id"))
         if not spec:
             continue
+        nm = D.name_for(r.get("id"), spec["name"], lang)
         if "cpm" in spec:
             impr = max(1000, int(r.get("impressions", 1_000_000)))
-            gross = impr / 1000 * spec["cpm"]
-            out.append({
-                "Line": D.name_for(r.get("id"), spec["name"], lang),
-                "Detail": f'CPM {inr_full(spec["cpm"])}',
-                "Loading": "0%",
-                "Qty": impr,
-                "Unit": "impressions",
-                "Rate": spec["cpm"],
-                "Gross": gross,
-                "Reach": min(impr * 0.42, spec["pool"]),
-                "Why": r.get("why", ""),
-                "Group": "Digital",
-            })
+            out.append({"Line": nm, "Detail": f'CPM {inr_full(spec["cpm"])}', "Loading": "0%",
+                        "Qty": impr, "Unit": "impressions", "Rate": spec["cpm"],
+                        "Gross": impr / 1000 * spec["cpm"],
+                        "Reach": min(impr * 0.42, spec["pool"]),
+                        "Why": r.get("why", ""), "Group": "Digital"})
         else:
-            units = max(1, int(r.get("units", r.get("impressions", 1) or 1)))
-            if units > 50:
-                units = 1
-            out.append({
-                "Line": D.name_for(r.get("id"), spec["name"], lang),
-                "Detail": "Fixed price",
-                "Loading": "0%",
-                "Qty": units,
-                "Unit": "unit",
-                "Rate": spec["flat"],
-                "Gross": spec["flat"] * units,
-                "Reach": spec["pool"] * min(units, 3) * 0.6,
-                "Why": r.get("why", ""),
-                "Group": "Digital",
-            })
+            u = max(1, int(r.get("units", 1) or 1))
+            u = 1 if u > 50 else u
+            out.append({"Line": nm, "Detail": "Fixed", "Loading": "0%", "Qty": u, "Unit": "unit",
+                        "Rate": spec["flat"], "Gross": spec["flat"] * u,
+                        "Reach": spec["pool"] * min(u, 3) * 0.6,
+                        "Why": r.get("why", ""), "Group": "Digital"})
     return out
 
 
-def price_content(rows, lang="en"):
+def price_content(rows, lang):
     out = []
     for r in rows:
         spec = D.CONTENT.get(r.get("id"))
         if not spec:
             continue
-        units = max(1, int(r.get("units", 1)))
-        out.append({
-            "Line": D.name_for(r.get("id"), spec["name"], lang),
-            "Detail": "Branded content desk",
-            "Loading": "0%",
-            "Qty": units,
-            "Unit": "unit",
-            "Rate": spec["flat"],
-            "Gross": spec["flat"] * units,
-            "Reach": spec["pool"] * units * 0.8,
-            "Why": r.get("why", ""),
-            "Group": "Content and events",
-        })
+        u = max(1, int(r.get("units", 1)))
+        out.append({"Line": D.name_for(r.get("id"), spec["name"], lang), "Detail": "Branded desk",
+                    "Loading": "0%", "Qty": u, "Unit": "unit", "Rate": spec["flat"],
+                    "Gross": spec["flat"] * u, "Reach": spec["pool"] * u * 0.8,
+                    "Why": r.get("why", ""), "Group": "Content and events"})
     return out
 
 
-def commercials(lines, agency, discount_pct, bonus_on):
-    gross = sum(l["Gross"] for l in lines)
+def commercials(lines, agency, disc, bonus_on):
+    gross = sum(l["Gross"] for l in lines) or 1
     space = sum(l["Gross"] for l in lines if l["Group"] != "Content and events")
     service = gross - space
-    discount = gross * discount_pct / 100
-    after_discount = gross - discount
-    commission = after_discount * D.AGENCY_COMMISSION if agency else 0.0
-    fee = 0.0 if agency else after_discount * D.PLANNING_FEE
-    net = after_discount - commission + fee
-    gst = (space / max(gross, 1)) * net * D.GST_SPACE + (service / max(gross, 1)) * net * D.GST_SERVICE
+    disc_amt = gross * disc / 100
+    after = gross - disc_amt
+    comm = after * D.AGENCY_COMMISSION if agency else 0.0
+    fee = 0.0 if agency else after * D.PLANNING_FEE
+    net = after - comm + fee
+    gst = (space / gross) * net * D.GST_SPACE + (service / gross) * net * D.GST_SERVICE
     reach = sum(l["Reach"] for l in lines)
-    bonus = sum(l["Gross"] for l in lines) * D.BONUS_INVENTORY if bonus_on else 0.0
-    return {
-        "gross": gross, "discount": discount, "commission": commission, "fee": fee,
-        "net": net, "gst": gst, "payable": net + gst, "reach": reach,
-        "bonus": bonus,
-        "cpm": (net / max(reach, 1)) * 1000,
-    }
+    return {"gross": gross, "discount": disc_amt, "commission": comm, "fee": fee, "net": net,
+            "gst": gst, "payable": net + gst, "reach": reach,
+            "bonus": gross * D.BONUS_INVENTORY if bonus_on else 0.0,
+            "cpm": (net / max(reach, 1)) * 1000}
 
 
-# --------------------------------------------------------------- model
 def build_prompt(brief, sources, budget, weeks, lang_name, markets):
-    menu_digital = "\n".join(f'  {k} = {v["name"]}' for k, v in D.DIGITAL.items())
-    menu_content = "\n".join(f'  {k} = {v["name"]}' for k, v in D.CONTENT.items())
     return f"""You are a media strategist with twenty years inside a large Indian news group, writing a plan for an advertiser.
 
 THE BRIEF:
@@ -191,229 +276,311 @@ BUDGET: {inr_full(budget)} gross. LENGTH: {weeks} weeks. PRIORITY MARKETS: {", "
 FROM OUR OWN FILES:
 {chr(10).join('  ' + s["title"] + ': ' + s["detail"] for s in sources)}
 
-PRINT: choose editions from {", ".join(D.PRINT_EDITIONS)}.
+PRINT editions: {", ".join(D.PRINT_EDITIONS)}
 Sizes: {", ".join(D.PRINT_SIZES)}. Positions: {", ".join(D.POSITION_LOADING)}.
+DIGITAL ids: {", ".join(D.DIGITAL)}
+CONTENT ids: {", ".join(D.CONTENT)}
 
-DIGITAL ids:
-{menu_digital}
+Never state a price or a total. Quantities only.
+Print is expensive, keep insertions deliberate. Digital impressions in millions.
+Use Hindi and regional inventory when the audience reaches past English readers.
+Write every word in {lang_name}.
 
-CONTENT AND EVENT ids:
-{menu_content}
-
-Rules you must follow:
-Never state a price, a rate or a total. Quantities only, pricing is calculated separately.
-Print is expensive, so keep insertions low and deliberate. Digital impressions should be in millions.
-Use Hindi or regional inventory whenever the audience reaches beyond English readers, and say why.
-Write every word of the output in {lang_name}.
-
-Reply with JSON only, this exact shape:
-{{"title":"short campaign name",
- "objective":"one sentence",
- "insight":"the non obvious observation this plan rests on, two sentences",
- "audience":["three short audience lines"],
- "print":[{{"edition":"","size":"","position":"","insertions":1,"why":"one line"}}],
- "digital":[{{"id":"","impressions":1000000,"why":"one line"}}],
- "content":[{{"id":"","units":1,"why":"one line"}}],
- "timeline":[{{"phase":"Weeks 1 to 2","action":"one line"}}],
- "kpis":["three measurable outcomes"],
- "risk":"one honest line about what could go wrong"}}"""
+Reply with JSON only:
+{{"title":"short campaign name","objective":"one sentence","insight":"two sentences",
+ "audience":["three lines"],
+ "print":[{{"edition":"","size":"","position":"","insertions":1,"why":""}}],
+ "digital":[{{"id":"","impressions":1000000,"why":""}}],
+ "content":[{{"id":"","units":1,"why":""}}],
+ "timeline":[{{"phase":"","action":""}}],
+ "kpis":["three outcomes"],"risk":"one line"}}"""
 
 
 def call_model(prompt):
     key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not key:
-        try:                      # no secrets file at all is a normal, keyless run
+        try:
             key = st.secrets.get("ANTHROPIC_API_KEY", "")
         except Exception:
             key = ""
     if not key:
-        return None, "no key"
+        return None, "nokey"
     try:
         from anthropic import Anthropic
-        client = Anthropic(api_key=key)
-        msg = client.messages.create(
-            model=MODEL, max_tokens=2000,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
-        text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
-        return json.loads(text), None
-    except Exception as e:  # a demo must never die in front of a client
-        return None, str(e)[:160]
+        msg = Anthropic(api_key=key).messages.create(
+            model=MODEL, max_tokens=2000, messages=[{"role": "user", "content": prompt}])
+        txt = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+        return json.loads(re.sub(r"^```(?:json)?|```$", "", txt.strip(), flags=re.M).strip()), None
+    except Exception as e:
+        return None, str(e)[:120]
 
 
-# --------------------------------------------------------------- sidebar
-with st.sidebar:
-    st.markdown("### Pitch Room")
-    st.caption("Kenja prototype. Rates illustrative.")
+# ------------------------------------------------------------------ pitch room
+def room_page():
+    with st.sidebar:
+        st.markdown(f"### {T['app']}")
+        st.caption(T["tagline"])
+        pick = st.selectbox(T["sb_brief_from"], list(D.SAMPLE_BRIEFS))
+        brief = st.text_area(T["sb_brief"], D.SAMPLE_BRIEFS[pick], height=150)
+        budget = st.select_slider(T["sb_budget"],
+                                  options=[25_000_000, 50_000_000, 75_000_000, 100_000_000, 150_000_000],
+                                  value=50_000_000, format_func=inr)
+        weeks = st.slider(T["sb_weeks"], 2, 16, 8, step=2)
+        markets = st.multiselect(T["sb_markets"], list(D.PRINT_EDITIONS),
+                                 default=["Delhi NCR", "Mumbai", "Bengaluru"])
+        season = st.selectbox(T["sb_season"], list(D.SEASON_LOADING))
+        st.divider()
+        st.caption(T["sb_comm"])
+        agency = st.toggle(T["sb_agency"], value=True)
+        disc = st.slider(T["sb_disc"], 0, 45, 18)
+        bonus = st.toggle(T["sb_bonus"], value=True)
+        start = st.date_input(T["sb_start"], value=date.today() + timedelta(days=21))
+        st.divider()
+        st.caption(T["sb_corpus"])
+        enabled = [c["id"] for c in D.CORPUS if st.checkbox(c["title"], True, key="c_" + c["id"])]
+        st.divider()
+        label = T["sb_again"] if ss.plan else T["sb_build"]
+        go = st.button(label, type="primary", use_container_width=True)
+        if ss.plan and st.button(T["sb_clear"], use_container_width=True):
+            ss.plan = None
+            st.rerun()
+        st.select_slider(T["sb_zoom"], options=[70, 80, 90, 100], key="zoom")
 
-    lang_label = st.radio("Output language", list(D.LANGS), horizontal=True)
-    lang = D.LANGS[lang_label]
+    if go:
+        sources = retrieve(brief, enabled)
+        with st.status(T["st_work"], expanded=True) as s:
+            st.write(T["st_read"])
+            st.write(T["st_ret"].format(n=len(sources)))
+            st.write(T["st_draft"])
+            data, err = call_model(build_prompt(
+                brief, sources, budget, weeks,
+                {"en": "English", "ja": "Japanese", "hi": "Hindi"}[L], markets or ["Delhi NCR"]))
+            off = data is None
+            if off:
+                data = D.FALLBACK[L]
+                st.write(T["st_nokey"] if err == "nokey" else T["st_fail"])
+            st.write(T["st_price"])
+            s.update(label=T["st_done"], state="complete", expanded=False)
+        ss.plan = {"data": data, "sources": sources, "offline": off, "lang": L,
+                   "weeks": weeks, "start": start, "budget": budget}
 
-    st.divider()
-    pick = st.selectbox("Start from a brief", list(D.SAMPLE_BRIEFS))
-    brief = st.text_area("The brief", D.SAMPLE_BRIEFS[pick], height=180)
+    if not ss.plan:
+        h(T["e_h"])
+        st.markdown(f'<div class="lede">{T["e_s"]}</div>', unsafe_allow_html=True)
+        c = st.columns(3)
+        for col, n, k, cls in zip(c, "123", ["e1", "e2", "e3"], ["", "n", "t"]):
+            with col:
+                st.markdown(f'<div class="card {cls}"><div class="step"><b>{n}</b>'
+                            f'<div><p>{T[k]}</p></div></div></div>', unsafe_allow_html=True)
+        st.caption(T["e_time"])
+        return
 
-    budget = st.select_slider(
-        "Gross budget",
-        options=[25_000_000, 50_000_000, 75_000_000, 100_000_000, 150_000_000],
-        value=50_000_000, format_func=inr)
-    weeks = st.slider("Campaign length, weeks", 2, 16, 8, step=2)
-    markets = st.multiselect("Priority markets", list(D.PRINT_EDITIONS),
-                             default=["Delhi NCR", "Mumbai", "Bengaluru"])
-    season = st.selectbox("Season loading", list(D.SEASON_LOADING))
+    plan = ss.plan
+    if plan["offline"] and plan["lang"] != L:
+        plan["data"], plan["lang"] = D.FALLBACK[L], L
+    d = plan["data"]
+    lines = (price_print(d.get("print", []), D.SEASON_LOADING[season])
+             + price_digital(d.get("digital", []), L)
+             + price_content(d.get("content", []), L))
+    c = commercials(lines, agency, disc, bonus)
+    df = pd.DataFrame(lines)
 
-    st.divider()
-    st.caption("Commercials")
-    agency = st.toggle("Accredited agency on the deal, 15 percent commission", value=True)
-    discount = st.slider("Negotiated discount on gross, percent", 0, 45, 18)
-    bonus = st.toggle("Concede 10 percent bonus inventory", value=True)
+    if ss.history[-1:] == [] or ss.history[-1].get("key") != (d.get("title"), round(c["payable"])):
+        ss.history.append({"key": (d.get("title"), round(c["payable"])), "title": d.get("title", ""),
+                           "payable": c["payable"], "reach": c["reach"], "cpm": c["cpm"],
+                           "lang": L, "when": pd.Timestamp.now().strftime("%H:%M"),
+                           "mix": df.groupby("Group")["Gross"].sum().to_dict()})
 
-    st.divider()
-    st.caption("Corpus")
-    enabled = [c["id"] for c in D.CORPUS if st.checkbox(c["title"], True, key="c_" + c["id"])]
+    if plan["offline"]:
+        st.markdown(f'<div class="warn">{T["offline"]}</div>', unsafe_allow_html=True)
+    elif plan["lang"] != L:
+        st.info(T["stale"])
 
-    go = st.button("Build the plan", type="primary", use_container_width=True)
+    h(d.get("title", ""))
+    st.markdown(f'<div class="lede">{d.get("objective","")}</div>', unsafe_allow_html=True)
+    st.markdown("".join(
+        f'<span class="pill" style="border-color:{RED};color:{RED};background:#FDEEF0">{s["title"]}</span>'
+        for s in plan["sources"]), unsafe_allow_html=True)
+
+    m = st.columns(5)
+    gap = (c["payable"] / plan["budget"] - 1) * 100
+    m[0].metric(T["pay"], inr(c["payable"]), f'{gap:+.0f}% {T["vs"]}')
+    m[1].metric(T["net"], inr(c["net"]))
+    m[2].metric(T["reach"], f'{c["reach"]/1_000_000:.1f} m')
+    m[3].metric(T["cpm"], inr_full(c["cpm"]))
+    m[4].metric(T["bonus"], inr(c["bonus"]))
+    if gap > 5:
+        st.markdown(f'<div class="warn">{T["over"]}</div>', unsafe_allow_html=True)
+    elif gap < -20:
+        st.markdown(f'<div class="good">{T["under"]}</div>', unsafe_allow_html=True)
+
+    P = D.PROTOCOL[L]
+    t1, t2, t3, t4, t5, t6 = st.tabs([T["t_plan"], T["t_num"], T["t_ro"], T["t_arg"],
+                                      P["tab"], T["t_exp"]])
+
+    with t1:
+        st.markdown(f"**{d.get('insight','')}**")
+        a, b = st.columns(2)
+        with a:
+            st.markdown("##### " + T["who"])
+            for x in d.get("audience", []):
+                st.markdown(f"- {x}")
+        with b:
+            st.markdown("##### " + T["runs"])
+            for t in d.get("timeline", []):
+                st.markdown(f"**{t.get('phase','')}**  {t.get('action','')}")
+        st.markdown("##### " + T["sched"])
+        show = df[["Line", "Detail", "Loading", "Qty", "Rate", "Gross", "Why"]].copy()
+        show["Rate"] = show["Rate"].map(inr_full)
+        show["Gross"] = show["Gross"].map(inr_full)
+        show["Qty"] = show["Qty"].map(lambda x: f"{x:,.0f}")
+        show.columns = [T["line"], T["detail"], T["loading"], T["qty"], T["rate"], T["gross"], T["why"]]
+        st.dataframe(show, use_container_width=True, hide_index=True)
+
+    with t2:
+        a, b = st.columns(2)
+        with a:
+            st.markdown("##### " + T["money"])
+            g = df.groupby("Group")["Gross"].sum().reset_index()
+            g.columns = [T["group"], T["gross"]]
+            st.bar_chart(g, x=T["group"], y=T["gross"], color=RED, height=250)
+        with b:
+            st.markdown("##### " + T["reachsrc"])
+            r = df.groupby("Group")["Reach"].sum().reset_index()
+            r.columns = [T["group"], T["reach"]]
+            st.bar_chart(r, x=T["group"], y=T["reach"], color=NAVY, height=250)
+        st.markdown("##### " + T["curve"])
+        wk = plan["weeks"]
+        curve = pd.DataFrame({T["week"]: list(range(1, wk + 1)),
+                              T["reach"]: [c["reach"] * (1 - pow(2.718, -2.2 * i / wk)) for i in range(1, wk + 1)]})
+        st.area_chart(curve, x=T["week"], y=T["reach"], color=TEAL, height=240)
+        st.markdown("##### " + T["settle"])
+        ladder = pd.DataFrame([
+            [T["gross"], c["gross"]], [f'{T["sb_disc"]} {disc}', -c["discount"]],
+            [T["sb_agency"] if agency else "Planning fee", -c["commission"] if agency else c["fee"]],
+            [T["net"], c["net"]], ["GST", c["gst"]], [T["pay"], c["payable"]]],
+            columns=[T["step"], T["amount"]])
+        ladder[T["amount"]] = ladder[T["amount"]].map(inr_full)
+        st.dataframe(ladder, use_container_width=True, hide_index=True)
+
+    with t3:
+        ro = f"RO/{date.today().strftime('%Y%m')}/{abs(hash(d.get('title','x'))) % 9000 + 1000}"
+        st.markdown(f"##### {T['ro_h']} {ro}")
+        st.write(f'{T["ro_mat"]}: {(plan["start"] - timedelta(days=7)).strftime("%d %b %Y")}')
+        rod = df[["Group", "Line", "Qty", "Unit", "Gross"]].copy()
+        rod["Gross"] = rod["Gross"].map(inr_full)
+        rod.columns = [T["group"], T["line"], T["qty"], "Unit", T["gross"]]
+        st.dataframe(rod, use_container_width=True, hide_index=True)
+        st.markdown(f'<div class="good">{T["ro_terms"].format(x=inr_full(c["payable"]), d=D.CREDIT_DAYS)}</div>',
+                    unsafe_allow_html=True)
+
+    with t4:
+        st.markdown("##### " + T["measure"])
+        for k in d.get("kpis", []):
+            st.markdown(f"- {k}")
+        st.markdown("##### " + T["risk"])
+        st.write(d.get("risk", ""))
+        st.markdown("##### " + T["whyus"])
+        st.write(T["whyus_b"])
+
+    with t5:
+        st.caption(P["intro"])
+        st.markdown("##### " + P["nema_h"])
+        st.write(P["nema_s"])
+        st.dataframe(pd.DataFrame(D.STAKEHOLDERS[L],
+                                  columns=[P["who"], P["cares"], P["ask"], P["when"]]),
+                     use_container_width=True, hide_index=True)
+        st.markdown("##### " + P["ringi_h"])
+        st.write(P["ringi_s"])
+        st.dataframe(pd.DataFrame([(i + 1, r[0], r[2], "") for i, r in enumerate(D.STAKEHOLDERS[L])],
+                                  columns=["#", P["who"], P["ask"], "承認"]),
+                     use_container_width=True, hide_index=True)
+        st.markdown("##### " + P["horen_h"])
+        st.write(P["horen_s"])
+        s0, wk = plan["start"], plan["weeks"]
+        cal = [(s0 - timedelta(days=7), T["ro_mat"], "Both"), (s0, "Live", "Publisher")]
+        for i in range(1, wk):
+            cal.append((s0 + timedelta(weeks=i),
+                        "Mid campaign review" if i == wk // 2 else "Written report, unprompted", "Us"))
+        cal.append((s0 + timedelta(weeks=wk), "Campaign ends", "Publisher"))
+        cal.append((s0 + timedelta(weeks=wk + 2), P["hansei_h"], "Us"))
+        st.dataframe(pd.DataFrame([(x[0].strftime("%d %b %Y"), x[1], x[2]) for x in cal],
+                                  columns=[P["date"], P["what"], P["owner"]]),
+                     use_container_width=True, hide_index=True)
+        st.markdown("##### " + P["hansei_h"])
+        st.write(P["hansei_s"])
+        st.markdown("##### " + P["commit_h"])
+        for x in P["commits"]:
+            st.markdown(f"- {x}")
+
+    with t6:
+        md = [f"# {d.get('title','')}", "", d.get("objective", ""), "", d.get("insight", ""), "",
+              f'| {T["line"]} | {T["qty"]} | {T["rate"]} | {T["gross"]} |', "| --- | --- | --- | --- |"]
+        for l in lines:
+            md.append(f'| {l["Line"]} | {l["Qty"]:,.0f} | {inr_full(l["Rate"])} | {inr_full(l["Gross"])} |')
+        md += ["", f'**{T["pay"]} {inr_full(c["payable"])} · {T["reach"]} {c["reach"]/1_000_000:.1f} m '
+                   f'· {T["cpm"]} {inr_full(c["cpm"])}**', "", T["risk"], d.get("risk", "")]
+        md = "\n".join(md)
+        st.code(md, language="markdown")
+        a, b = st.columns(2)
+        a.download_button(T["dl_md"], md, file_name="plan.md", use_container_width=True)
+        b.download_button(T["dl_csv"], df.to_csv(index=False), file_name="schedule.csv",
+                          use_container_width=True)
 
 
-# --------------------------------------------------------------- run
-if "plan" not in st.session_state:
-    st.session_state.plan = None
-
-if go:
-    sources = retrieve(brief, enabled)
-    with st.status("Working", expanded=True) as status:
-        st.write("Reading the brief")
-        st.write(f"Retrieved {len(sources)} sources: " + ", ".join(s["title"] for s in sources))
-        st.write("Drafting the plan")
-        data, err = call_model(build_prompt(brief, sources, budget, weeks, lang_label, markets or ["Delhi NCR"]))
-        offline = data is None
-        if offline:
-            data = D.FALLBACK[lang]
-            st.write("Running without a key, showing the saved example" if err == "no key" else f"Model unavailable ({err}), using the saved example")
-        st.write("Pricing from the rate card")
-        status.update(label="Done", state="complete", expanded=False)
-    st.session_state.plan = {"data": data, "sources": sources, "offline": offline, "lang": lang}
-
-plan = st.session_state.plan
-
-if not plan:
-    st.markdown('<div class="big">Nothing built yet</div>', unsafe_allow_html=True)
-    st.write("Set the brief on the left and press build. A costed plan appears in about twenty seconds.")
-    st.stop()
-
-d = plan["data"]
-# the saved example exists in every language, so follow the picker immediately
-if plan["offline"] and plan["lang"] != lang:
-    d = D.FALLBACK[lang]
-    plan["data"], plan["lang"] = d, lang
-
-U = D.UI[lang]
-lines = (price_print(d.get("print", []), D.SEASON_LOADING[season])
-         + price_digital(d.get("digital", []), lang)
-         + price_content(d.get("content", []), lang))
-c = commercials(lines, agency, discount, bonus)
-df = pd.DataFrame(lines)
-
-if plan["offline"]:
-    st.markdown('<div class="warn">Showing the saved example. Everything here works except freshly written copy, which needs an API key.</div>',
-                unsafe_allow_html=True)
-
-if not plan["offline"] and plan["lang"] != lang:
-    st.info(D.UI[lang]["stale"])
-st.markdown(f'<div class="big">{d.get("title","")}</div>', unsafe_allow_html=True)
-st.write(d.get("objective", ""))
-st.markdown("".join(f'<span class="srcpill">{s["title"]}</span>' for s in plan["sources"]),
-            unsafe_allow_html=True)
-
-over = c["payable"] > budget * 1.05
-m = st.columns(5)
-m[0].metric(U["pay"], inr(c["payable"]), f'{(c["payable"]/budget-1)*100:+.0f}% against budget')
-m[1].metric(U["net"], inr(c["net"]))
-m[2].metric(U["reach"], f'{c["reach"]/1_000_000:.1f} m')
-m[3].metric(U["cpm"], inr_full(c["cpm"]))
-m[4].metric(U["bonus"], inr(c["bonus"]))
-if over:
-    st.markdown(f'<div class="warn">{U["over"]}</div>', unsafe_allow_html=True)
-
-t1, t2, t3, t4, t5 = st.tabs(["The plan", "The numbers", "Release order", "The argument", "Export"])
-
-with t1:
-    st.markdown(f'**{d.get("insight","")}**')
-    st.write("")
-    cc = st.columns(2)
-    with cc[0]:
-        st.markdown("##### " + U["who"])
-        for a in d.get("audience", []):
-            st.markdown(f"- {a}")
-    with cc[1]:
-        st.markdown("##### " + U["runs"])
-        for t in d.get("timeline", []):
-            st.markdown(f"**{t.get('phase','')}**  {t.get('action','')}")
-    st.markdown("##### " + U["sched"])
-    show = df[["Line", "Detail", "Loading", "Qty", "Rate", "Gross", "Why"]].copy()
-    show.columns = [U["line"], U["detail"], U["loading"], U["qty"], U["rate"], U["gross"], U["why"]]
-    show[U["rate"]] = show[U["rate"]].map(inr_full)
-    show[U["gross"]] = show[U["gross"]].map(inr_full)
-    show[U["qty"]] = show[U["qty"]].map(lambda x: f"{x:,.0f}")
+# ------------------------------------------------------------------ analytics
+def analytics_page():
+    h(T["an_h"])
+    hist = ss.history
+    if not hist:
+        st.markdown(f'<div class="lede">{T["an_empty"]}</div>', unsafe_allow_html=True)
+        return
+    hd = pd.DataFrame(hist)
+    m = st.columns(4)
+    m[0].metric(T["an_plans"], len(hd))
+    m[1].metric(T["an_value"], inr(hd["payable"].sum()))
+    m[2].metric(T["an_avgcpm"], inr_full(hd["cpm"].mean()))
+    m[3].metric(T["an_reach"], f'{hd["reach"].sum()/1_000_000:.1f} m')
+    a, b = st.columns(2)
+    with a:
+        st.markdown("##### " + T["an_byplan"])
+        v = hd[["title", "payable"]].copy()
+        v.columns = [T["an_title"], T["pay"]]
+        st.bar_chart(v, x=T["an_title"], y=T["pay"], color=RED, height=260)
+    with b:
+        st.markdown("##### " + T["an_eff"])
+        e = hd[["title", "cpm"]].copy()
+        e.columns = [T["an_title"], T["cpm"]]
+        st.bar_chart(e, x=T["an_title"], y=T["cpm"], color=GOLD, height=260)
+    st.markdown("##### " + T["an_mix"])
+    mix = {}
+    for row in hist:
+        for k, v in row["mix"].items():
+            mix[k] = mix.get(k, 0) + v
+    mx = pd.DataFrame({T["group"]: list(mix), T["gross"]: list(mix.values())})
+    st.bar_chart(mx, x=T["group"], y=T["gross"], color=TEAL, height=240)
+    st.markdown("##### " + T["an_hist"])
+    show = hd[["when", "title", "lang", "payable", "reach", "cpm"]].copy()
+    show["payable"] = show["payable"].map(inr_full)
+    show["reach"] = show["reach"].map(lambda x: f"{x/1_000_000:.1f} m")
+    show["cpm"] = show["cpm"].map(inr_full)
+    show.columns = [T["an_when"], T["an_title"], T["an_lang"], T["pay"], T["reach"], T["cpm"]]
     st.dataframe(show, use_container_width=True, hide_index=True)
 
-with t2:
-    a, b = st.columns([1, 1])
-    with a:
-        st.markdown("##### " + U["money"])
-        bygroup = df.groupby("Group")["Gross"].sum().reset_index()
-        st.bar_chart(bygroup, x="Group", y="Gross", color="#C8102E", height=260)
-    with b:
-        st.markdown("##### " + U["reachsrc"])
-        byreach = df.groupby("Group")["Reach"].sum().reset_index()
-        st.bar_chart(byreach, x="Group", y="Reach", color="#1B2A4A", height=260)
-    st.markdown("##### " + U["settle"])
-    ladder = pd.DataFrame([
-        ["Gross, card rate", c["gross"]],
-        [f"Negotiated discount, {discount} percent", -c["discount"]],
-        ["Agency commission, 15 percent" if agency else "Planning fee, 12 percent",
-         -c["commission"] if agency else c["fee"]],
-        ["Net", c["net"]],
-        ["GST", c["gst"]],
-        ["Payable by the advertiser", c["payable"]],
-    ], columns=["Step", "Amount"])
-    ladder["Amount"] = ladder["Amount"].map(inr_full)
-    st.dataframe(ladder, use_container_width=True, hide_index=True)
-    st.caption("Space carries 5 percent GST, content and events carry 18 percent. "
-               f"Credit period {D.CREDIT_DAYS} days from the release order.")
 
-with t3:
-    ro = f"RO/{date.today().strftime('%Y%m')}/{abs(hash(d.get('title','x'))) % 9000 + 1000}"
-    st.markdown(f"##### Release order {ro}")
-    st.write(f"Material deadline: {(date.today()+timedelta(days=7)).strftime('%d %B %Y')} for print, "
-             f"{(date.today()+timedelta(days=4)).strftime('%d %B %Y')} for digital.")
-    ro_df = df[["Group", "Line", "Qty", "Unit", "Gross"]].copy()
-    ro_df["Gross"] = ro_df["Gross"].map(inr_full)
-    st.dataframe(ro_df, use_container_width=True, hide_index=True)
-    st.markdown(f'<div class="ok">Net payable {inr_full(c["payable"])} including tax. '
-                f'Credit {D.CREDIT_DAYS} days. Cancellation, 14 days notice for print, 7 for digital.</div>',
-                unsafe_allow_html=True)
-
-with t4:
-    st.markdown("##### " + U["measure"])
-    for k in d.get("kpis", []):
-        st.markdown(f"- {k}")
-    st.markdown("##### " + U["risk"])
-    st.write(d.get("risk", ""))
-    st.markdown("##### " + U["whyus"])
-    st.write(U["whyus_body"])
-
-with t5:
-    md = [f"# {d.get('title','')}", "", d.get("objective", ""), "", "## Insight", d.get("insight", ""), "",
-          "## Schedule", "", "| Line | Qty | Rate | Gross |", "| --- | --- | --- | --- |"]
-    for l in lines:
-        md.append(f'| {l["Line"]} | {l["Qty"]:,.0f} {l["Unit"]} | {inr_full(l["Rate"])} | {inr_full(l["Gross"])} |')
-    md += ["", f'**Net {inr_full(c["net"])}, payable with tax {inr_full(c["payable"])}, '
-               f'reach {c["reach"]/1_000_000:.1f} million, CPM {inr_full(c["cpm"])}**', "",
-           "## Risk", d.get("risk", ""), "", "_Prototype. Rates illustrative._"]
-    md = "\n".join(md)
-    st.code(md, language="markdown")
-    st.download_button("Download Markdown", md, file_name="media_plan.md", use_container_width=True)
-    st.download_button("Download the schedule as CSV", df.to_csv(index=False),
-                       file_name="schedule.csv", use_container_width=True)
+# ------------------------------------------------------------------ run
+topbar()
+if not ss.user:
+    auth_page()
+else:
+    nav = st.radio("nav", [T["nav_what"], T["nav_room"], T["nav_an"]],
+                   index={"what": 0, "room": 1, "an": 2}[ss.page],
+                   horizontal=True, label_visibility="collapsed")
+    ss.page = {T["nav_what"]: "what", T["nav_room"]: "room", T["nav_an"]: "an"}[nav]
+    st.write("")
+    if ss.page == "what":
+        what_page()
+    elif ss.page == "room":
+        room_page()
+    else:
+        analytics_page()
